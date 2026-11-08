@@ -5,8 +5,8 @@ const { MercadoPagoConfig, Preference } = require('mercadopago');
 
 const mpClient = new MercadoPagoConfig({ accessToken: process.env.MP_ACCESS_TOKEN });
 
-exports.createCheckoutOrder = async (buyerId, items, paymentMethodType) => {
-  const reservedItems = []; // Registro para rollback si algo falla a mitad de camino
+exports.createCheckoutOrder = async (buyerId, items, paymentMethodType, shippingData) => {
+  const reservedItems = [];
 
   try {
     let totalAmount = 0;
@@ -14,7 +14,6 @@ exports.createCheckoutOrder = async (buyerId, items, paymentMethodType) => {
     const orderItems = [];
 
     for (const item of items) {
-      // Operación 100% atómica en MongoDB Standalone
       const updatedProduct = await Product.findOneAndUpdate(
         { _id: item.productId, stock: { $gte: item.quantity }, status: 'activa' },
         { $inc: { stock: -item.quantity, soldCount: item.quantity } },
@@ -25,7 +24,6 @@ exports.createCheckoutOrder = async (buyerId, items, paymentMethodType) => {
         throw new Error(`Stock insuficiente o artículo no disponible: ${item.productId}`);
       }
 
-      // Guardamos en el historial de reserva por si hay que revertir
       reservedItems.push({ productId: updatedProduct._id, quantity: item.quantity });
 
       if (updatedProduct.stock === 0) {
@@ -56,30 +54,56 @@ exports.createCheckoutOrder = async (buyerId, items, paymentMethodType) => {
       items: orderItems,
       totalAmount,
       paymentMethod: paymentMethodType,
-      status: 'pendiente_pago'
-    });
-
-    const preference = new Preference(mpClient);
-    const mpResponse = await preference.create({
-      body: {
-        items: mpItems,
-        external_reference: order._id.toString(),
-        notification_url: `${process.env.BACKEND_URL}/api/webhooks/mercadopago`,
-        back_urls: {
-          success: `${process.env.FRONTEND_URL}/panel/compras`,
-          failure: `${process.env.FRONTEND_URL}/checkout/error`
+      status: 'pendiente_pago',
+      shipping: {
+        carrier: shippingData?.carrier || 'Correo Argentino',
+        address: {
+          street: shippingData?.street || 'Dirección a coordinar',
+          city: shippingData?.city || 'Ciudad',
+          state: shippingData?.state || 'Provincia',
+          zipCode: shippingData?.zipCode || '0000',
+          notes: shippingData?.notes || ''
         },
-        auto_return: 'approved'
+        shippingStatus: 'pendiente_despacho',
+        history: [{
+          stage: 'Orden generada',
+          description: `Envío solicitado por ${shippingData?.carrier || 'Correo Argentino'}`,
+          updatedAt: new Date()
+        }]
       }
     });
 
+    let initPoint = null;
+    let preferenceId = `PREF-LOCAL-${order._id}`;
+
+    if (process.env.MP_ACCESS_TOKEN && !process.env.MP_ACCESS_TOKEN.startsWith('TEST-0000')) {
+      try {
+        const preference = new Preference(mpClient);
+        const mpResponse = await preference.create({
+          body: {
+            items: mpItems,
+            external_reference: order._id.toString(),
+            notification_url: `${process.env.BACKEND_URL}/api/webhooks/mercadopago`,
+            back_urls: {
+              success: `${process.env.FRONTEND_URL}/panel/compras`,
+              failure: `${process.env.FRONTEND_URL}/checkout/error`
+            },
+            auto_return: 'approved'
+          }
+        });
+        initPoint = mpResponse.init_point;
+        preferenceId = mpResponse.id;
+      } catch (mpErr) {
+        console.warn('[miecommerce] Usando pasarela QR/Tarjeta local:', mpErr.message);
+      }
+    }
+
     return {
       orderId: order._id,
-      initPoint: mpResponse.init_point,
-      preferenceId: mpResponse.id
+      initPoint,
+      preferenceId
     };
   } catch (error) {
-    // COMPENSACIÓN (Rollback manual): Si falló un ítem o la pasarela, devolvemos el stock descontado
     for (const reserved of reservedItems) {
       await Product.findByIdAndUpdate(reserved.productId, {
         $inc: { stock: reserved.quantity, soldCount: -reserved.quantity },

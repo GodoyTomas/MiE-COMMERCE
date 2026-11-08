@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>miecommerce - Compra y vende con Compra Protegida</title>
+  <link rel="stylesheet" href="/styles.css" />
+  <script src="/socket.io/socket.io.js"></script>
+</head>
+<body>
+
+  <!-- BARRA DE NAVEGACIÓN ESTILO MERCADO LIBRE -->
+  <header class="navbar">
+    <div class="nav-container">
+      <div class="nav-top">
+        <a href="#" class="brand" onclick="navigate('home')">
+          <span class="brand-icon">🤝</span> miecommerce
+        </a>
+
+        <form id="search-form" class="search-bar" onsubmit="handleSearch(event)">
+          <input type="text" id="search-input" placeholder="Buscar productos, marcas y más..." />
+          <select id="search-category">
+            <option value="">Todas las categorías</option>
+            <option value="Tecnología">Tecnología</option>
+            <option value="Electrodomésticos">Electrodomésticos</option>
+            <option value="Hogar y Muebles">Hogar y Muebles</option>
+            <option value="Herramientas">Herramientas</option>
+            <option value="Vehículos y Accesorios">Vehículos y Accesorios</option>
+            <option value="Deportes">Deportes</option>
+          </select>
+          <button type="submit" title="Buscar">🔍</button>
+        </form>
+
+        <div style="display:flex; align-items:center; gap:12px">
+          <div class="nav-user" id="nav-user-area">
+            <button class="btn-primary" onclick="openModal('modal-auth')">Ingresar / Crear cuenta</button>
+          </div>
+          <button class="btn-outline" style="position:relative; font-weight:700" onclick="openCartModal()">
+            🛒 Carrito <span id="cart-badge" style="background:#d32f2f; color:#fff; border-radius:50%; padding:2px 7px; font-size:0.75rem">0</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="nav-bottom">
+        <div class="categories-quick">
+          <span onclick="quickFilter('')">Explorar todo</span>
+          <span onclick="quickFilter('Tecnología')">Tecnología</span>
+          <span onclick="quickFilter('Electrodomésticos')">Electrodomésticos</span>
+          <span onclick="quickFilter('Hogar y Muebles')">Hogar y Muebles</span>
+          <span onclick="quickFilter('Herramientas')">Herramientas</span>
+          <span onclick="quickFilter('Deportes')">Deportes</span>
+        </div>
+        <div id="live-status" class="live-indicator">🟢 Tiempo real activo</div>
+      </div>
+    </div>
+  </header>
+
+  <div id="toast-container" class="toast-container"></div>
+
+  <!-- VISTA 1: HOME -->
+  <main id="view-home" class="view active">
+    <section class="carousel-section">
+      <div class="carousel-header">
+        <h2 id="carousel-title">Cargando recomendaciones...</h2>
+        <div class="carousel-controls">
+          <button type="button" onclick="scrollCarousel(-1)">&#10094;</button>
+          <button type="button" onclick="scrollCarousel(1)">&#10095;</button>
+        </div>
+      </div>
+      <div id="carousel-track" class="carousel-track"></div>
+    </section>
+
+    <section class="explorer-layout">
+      <aside class="filters-sidebar">
+        <h3>Filtros de búsqueda</h3>
+        <div class="filter-group">
+          <label>Condición</label>
+          <select id="filter-condition" onchange="loadProducts()">
+            <option value="">Todas</option>
+            <option value="nuevo">Nuevo</option>
+            <option value="usado">Usado</option>
+            <option value="reacondicionado">Reacondicionado</option>
+          </select>
+        </div>
+        <div class="filter-group">
+          <label>Precio mínimo ($)</label>
+          <input type="number" id="filter-min-price" placeholder="Ej: 1000" />
+        </div>
+        <div class="filter-group">
+          <label>Precio máximo ($)</label>
+          <input type="number" id="filter-max-price" placeholder="Ej: 2000000" />
+        </div>
+        <div class="filter-group">
+          <label>Ordenar por</label>
+          <select id="filter-sort" onchange="loadProducts()">
+            <option value="-soldCount">Más vendidos</option>
+            <option value="price">Menor precio</option>
+            <option value="-price">Mayor precio</option>
+            <option value="-ratingSummary.average">Mejor valorados</option>
+          </select>
+        </div>
+        <button class="btn-primary full-width" onclick="loadProducts()">Aplicar filtros</button>
+      </aside>
+
+      <div class="products-content">
+        <div class="results-header" style="margin-bottom:12px">
+          <span id="results-count">Mostrando artículos disponibles</span>
+        </div>
+        <div id="products-grid" class="products-grid"></div>
+      </div>
+    </section>
+  </main>
+
+  <!-- VISTA 2: DETALLE DE ARTÍCULO -->
+  <main id="view-product" class="view">
+    <button class="btn-back" onclick="navigate('home')">&larr; Volver al listado</button>
+    <div id="product-detail-container" class="product-detail-card"></div>
+  </main>
+
+  <!-- VISTA 3: PANEL DE USUARIO -->
+  <main id="view-dashboard" class="view">
+    <div id="dashboard-container"></div>
+  </main>
+
+  <!-- MODAL DE CARRITO MULTI-PRODUCTO -->
+  <div id="modal-cart" class="modal-overlay">
+    <div class="modal-box modal-checkout-box">
+      <button class="modal-close" onclick="closeModal('modal-cart')">&times;</button>
+      <h2>🛒 Tu Carrito de Compras</h2>
+      <div id="cart-items-container" style="margin:16px 0; max-height:320px; overflow-y:auto"></div>
+      <div id="cart-footer" style="border-top:1px solid #eee; padding-top:14px; display:flex; justify-content:space-between; align-items:center">
+        <strong id="cart-total-label" style="font-size:1.2rem">Total: $0</strong>
+        <div style="display:flex; gap:8px">
+          <button class="btn-outline" onclick="clearCart()">Vaciar</button>
+          <button class="btn-primary" onclick="checkoutFromCart()">Iniciar Compra del Carrito</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL DE LOGIN / REGISTRO -->
+  <div id="modal-auth" class="modal-overlay">
+    <div class="modal-box">
+      <button class="modal-close" onclick="closeModal('modal-auth')">&times;</button>
+      <div class="auth-tabs">
+        <button id="tab-login" class="active" onclick="switchAuthTab('login')">Iniciar Sesión</button>
+        <button id="tab-register" onclick="switchAuthTab('register')">Crear Cuenta</button>
+      </div>
+
+      <form id="form-login" onsubmit="handleLogin(event)">
+        <div class="form-group">
+          <label>Correo electrónico</label>
+          <input type="email" id="login-email" required placeholder="tu@email.com" />
+        </div>
+        <div class="form-group">
+          <label>Contraseña</label>
+          <input type="password" id="login-password" required placeholder="••••••••" />
+        </div>
+        <button type="submit" class="btn-primary full-width">Ingresar a miecommerce</button>
+      </form>
+
+      <form id="form-register" class="hidden" onsubmit="handleRegister(event)">
+        <div class="form-group">
+          <label>Nombre completo o Tienda</label>
+          <input type="text" id="reg-name" required placeholder="Ej: Tomás Electrónica" />
+        </div>
+        <div class="form-group">
+          <label>Correo electrónico</label>
+          <input type="email" id="reg-email" required placeholder="tu@email.com" />
+        </div>
+        <div class="form-group">
+          <label>Contraseña</label>
+          <input type="password" id="reg-password" required minlength="6" placeholder="Mínimo 6 caracteres" />
+        </div>
+        <button type="submit" class="btn-primary full-width">Registrarme gratis</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL DE CHECKOUT (ENVÍO + QR + TARJETA + SALDO DE BILLETERA) -->
+  <div id="modal-checkout" class="modal-overlay">
+    <div class="modal-box modal-checkout-box" style="max-height:92vh; overflow-y:auto">
+      <button class="modal-close" onclick="closeModal('modal-checkout')">&times;</button>
+      <h2>Finalizar Compra Protegida 🛡️</h2>
+      <p id="checkout-summary-text" style="margin:8px 0 14px; color:#555"></p>
+
+      <div class="shipping-form-box" style="background:#f8f9fa; padding:14px; border-radius:6px; margin-bottom:16px; border:1px solid #e0e0e0">
+        <h4 style="margin-bottom:10px; color:#2d3277">🚚 1. Datos de Envío a Domicilio / Sucursal</h4>
+        <div class="form-row" style="grid-template-columns: 1fr 1fr">
+          <div class="form-group">
+            <label>Empresa de Correo</label>
+            <select id="ship-carrier">
+              <option value="Correo Argentino">Correo Argentino (Clásico / Prioritario)</option>
+              <option value="Andreani">Andreani Estándar</option>
+              <option value="OCA">OCA e-Pak</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Código Postal</label>
+            <input type="text" id="ship-zip" required placeholder="Ej: 3300" value="3300" />
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Calle y altura (o Sucursal de destino)</label>
+          <input type="text" id="ship-street" required placeholder="Ej: Av. Mitre 1234" value="Av. Mitre 1234" />
+        </div>
+        <div class="form-row" style="grid-template-columns: 1fr 1fr">
+          <div class="form-group">
+            <label>Ciudad / Localidad</label>
+            <input type="text" id="ship-city" required placeholder="Ej: Posadas" value="Posadas" />
+          </div>
+          <div class="form-group">
+            <label>Provincia</label>
+            <input type="text" id="ship-state" required placeholder="Ej: Misiones" value="Misiones" />
+          </div>
+        </div>
+      </div>
+
+      <h4 style="margin-bottom:8px; color:#2d3277">💳 2. Medio de Pago Electrónico</h4>
+      <div class="payment-selector">
+        <button type="button" id="pay-tab-qr" class="active" onclick="selectPaymentTab('qr')">📱 Código QR</button>
+        <button type="button" id="pay-tab-card" onclick="selectPaymentTab('credit_card')">💳 Tarjeta</button>
+        <button type="button" id="pay-tab-wallet" onclick="selectPaymentTab('wallet')">💰 Saldo Billetera</button>
+      </div>
+
+      <!-- Opción 1: QR Dinámico -->
+      <div id="payment-panel-qr" class="payment-panel">
+        <div class="qr-box">
+          <img id="qr-image" src="" alt="Código QR de Pago" />
+          <p class="qr-instructions">Escanea este QR desde Mercado Pago, MODO o app bancaria. Tu dinero queda protegido en <strong>Escrow</strong>.</p>
+          <span class="order-badge" id="qr-order-ref"></span>
+        </div>
+      </div>
+
+      <!-- Opción 2: Tarjeta -->
+      <div id="payment-panel-card" class="payment-panel hidden">
+        <div class="credit-card-preview">
+          <div class="cc-chip"></div>
+          <div class="cc-number" id="cc-preview-num">•••• •••• •••• 4242</div>
+          <div class="cc-bottom">
+            <span id="cc-preview-name">NOMBRE Y APELLIDO</span>
+            <span id="cc-preview-exp">12/28</span>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Tipo de tarjeta</label>
+          <select id="card-type">
+            <option value="credit_card">Tarjeta de Crédito (Hasta 12 cuotas)</option>
+            <option value="debit_card">Tarjeta de Débito (Acreditación instantánea)</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Número de tarjeta</label>
+          <input type="text" id="card-number" maxlength="19" placeholder="4509 1234 5678 9010" oninput="updateCardPreview()" />
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Titular</label>
+            <input type="text" id="card-holder" placeholder="Como figura en la tarjeta" oninput="updateCardPreview()" />
+          </div>
+          <div class="form-group">
+            <label>Vencimiento</label>
+            <input type="text" id="card-expiry" maxlength="5" placeholder="MM/AA" oninput="updateCardPreview()" />
+          </div>
+          <div class="form-group">
+            <label>CVV</label>
+            <input type="password" id="card-cvv" maxlength="4" placeholder="123" />
+          </div>
+        </div>
+      </div>
+
+      <!-- Opción 3: Saldo de Billetera -->
+      <div id="payment-panel-wallet" class="payment-panel hidden">
+        <div class="qr-box" style="border-color:#00a650; background:#f1f8e9">
+          <h3 style="color:#1b5e20">💰 Pagar con Saldo Disponible en miecommerce</h3>
+          <p style="margin-top:8px; color:#333">Usa el dinero liberado de tus ventas para comprar sin comisiones ni tarjetas.</p>
+        </div>
+      </div>
+
+      <div class="checkout-actions">
+        <button id="btn-confirm-payment" class="btn-success full-width" onclick="confirmElectronicPayment()">
+          Confirmar Pago Electrónico Ahora
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL DE CHAT PRIVADO POST-VENTA -->
+  <div id="modal-chat" class="modal-overlay">
+    <div class="modal-box modal-checkout-box">
+      <button class="modal-close" onclick="closeModal('modal-chat')">&times;</button>
+      <h3 id="chat-modal-title">💬 Mensajería Privada de la Orden</h3>
+      <div id="chat-messages-box" style="height:280px; overflow-y:auto; background:#f5f5f5; padding:12px; border-radius:6px; margin:12px 0; display:flex; flex-direction:column; gap:8px"></div>
+      <form onsubmit="submitOrderChatMessage(event)" style="display:flex; gap:8px">
+        <input type="text" id="chat-input-text" required placeholder="Escribe un mensaje privado sobre el envío o factura..." style="flex:1; padding:9px; border:1px solid #ccc; border-radius:6px" />
+        <button type="submit" class="btn-primary">Enviar</button>
+      </form>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

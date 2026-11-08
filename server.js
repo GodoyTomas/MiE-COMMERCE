@@ -1,9 +1,10 @@
 // miecommerce/server.js
 require('dotenv').config();
+const path = require('path');
 const http = require('http');
 const express = require('express');
 const cors = require('cors');
-const mongoose = require('mongoose');
+const { connectDB } = require('./src/config/db');
 const { initSocket } = require('./src/config/socket');
 const { startStockRecoveryCron } = require('./src/services/stockCronService');
 const apiRoutes = require('./src/routes/api.routes');
@@ -11,22 +12,25 @@ const apiRoutes = require('./src/routes/api.routes');
 const app = express();
 const server = http.createServer(app);
 
-// Inicializar Socket.io para notificaciones en tiempo real
+// Inicializar WebSockets (Socket.io)
 initSocket(server);
 
+// Middlewares
 app.use(cors());
 app.use(express.json());
+
+// Servir archivos estáticos del Frontend (carpeta public)
+app.use(express.static(path.join(__dirname, 'public')));
+
+// Rutas de la API REST
 app.use('/api', apiRoutes);
 
-mongoose.connect(process.env.MONGODB_URI)
-  .then(() => {
-    console.log('[miecommerce] Conectado a MongoDB');
-    // Iniciar el Cron Job que devuelve el stock de pagos abandonados
-    startStockRecoveryCron();
+// Conectar a Filess.io e iniciar el servidor
+connectDB().then(() => {
+  startStockRecoveryCron();
 
-    const PORT = process.env.PORT || 4000;
-    server.listen(PORT, () => {
-      console.log(`[miecommerce] Servidor corriendo en http://localhost:${PORT}`);
-    });
-  })
-  .catch((err) => console.error('Error conectando a MongoDB:', err));
+  const PORT = process.env.PORT || 4000;
+  server.listen(PORT, () => {
+    console.log(`[miecommerce] Servidor corriendo en http://localhost:${PORT}`);
+  });
+});

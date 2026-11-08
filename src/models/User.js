@@ -9,12 +9,19 @@ const userSchema = new mongoose.Schema({
     totalSales: { type: Number, default: 0 },
     sellerRating: { type: Number, default: 5.0 }
   },
-  // Billetera con sistema Escrow (Compra Protegida)
   wallet: {
-    pendingBalance: { type: Number, default: 0 }, // Dinero retenido hasta que el comprador confirme recepción
-    availableBalance: { type: Number, default: 0 } // Dinero listo para retirar o usar en miecommerce
+    pendingBalance: { type: Number, default: 0 },
+    availableBalance: { type: Number, default: 0 }
   },
-  // Historial acotado para el Carrusel Dinámico
+  favorites: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Product'
+  }],
+  withdrawals: [{
+    amount: Number,
+    cbuOrAlias: String,
+    createdAt: { type: Date, default: Date.now }
+  }],
   recentlyViewed: [{
     product: { type: mongoose.Schema.Types.ObjectId, ref: 'Product' },
     category: { type: String },

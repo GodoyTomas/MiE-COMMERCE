@@ -11,7 +11,11 @@ const orderSchema = new mongoose.Schema({
     unitPrice: { type: Number, required: true }
   }],
   totalAmount: { type: Number, required: true },
-  paymentMethod: { type: String, enum: ['qr', 'credit_card', 'debit_card'], required: true },
+  paymentMethod: {
+    type: String,
+    enum: ['qr', 'credit_card', 'debit_card', 'wallet'],
+    required: true
+  },
   paymentExternalId: { type: String, default: null },
   status: {
     type: String,
@@ -19,10 +23,43 @@ const orderSchema = new mongoose.Schema({
     default: 'pendiente_pago',
     index: true
   },
-  canReview: { type: Boolean, default: false }, // Se activa únicamente al confirmar la entrega
+  shipping: {
+    carrier: {
+      type: String,
+      enum: ['Correo Argentino', 'Andreani', 'OCA'],
+      default: 'Correo Argentino'
+    },
+    address: {
+      street: { type: String, required: true },
+      city: { type: String, required: true },
+      state: { type: String, required: true },
+      zipCode: { type: String, required: true },
+      notes: { type: String, default: '' }
+    },
+    trackingCode: { type: String, default: null },
+    shippingStatus: {
+      type: String,
+      enum: ['pendiente_despacho', 'etiqueta_lista', 'despachado', 'en_transito', 'en_distribucion', 'entregado'],
+      default: 'pendiente_despacho'
+    },
+    dispatchedAt: { type: Date, default: null },
+    history: [{
+      stage: String,
+      description: String,
+      updatedAt: { type: Date, default: Date.now }
+    }]
+  },
+  // CHAT PRIVADO POST-VENTA (COMPRADOR <-> VENDEDOR)
+  messages: [{
+    sender: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    senderName: String,
+    text: String,
+    createdAt: { type: Date, default: Date.now }
+  }],
+  canReview: { type: Boolean, default: false },
   expiresAt: {
     type: Date,
-    default: () => new Date(Date.now() + 30 * 60 * 1000) // 30 minutos para pagar antes de devolver stock
+    default: () => new Date(Date.now() + 30 * 60 * 1000)
   }
 }, { timestamps: true });
 
