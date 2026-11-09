@@ -59,14 +59,12 @@ exports.getProductDetails = async (req, res) => {
 
 exports.createProduct = async (req, res) => {
   try {
-    const { title, description, category, price, stock, imageUrl, images, condition } = req.body;
+    const { title, description, category, price, discountPercent, stock, imageUrl, images, condition } = req.body;
 
     let finalImages = [];
-    // 1. Fotos subidas desde la PC con Multer
     if (req.files && req.files.length > 0) {
       finalImages = req.files.map(f => `/uploads/${f.filename}`);
     }
-    // 2. URL externa opcional
     if (imageUrl && imageUrl.trim() !== '') {
       finalImages.push(imageUrl.trim());
     } else if (Array.isArray(images)) {
@@ -82,6 +80,7 @@ exports.createProduct = async (req, res) => {
       description,
       category,
       price: Number(price),
+      discountPercent: Math.min(90, Math.max(0, Number(discountPercent || 0))),
       stock: Number(stock),
       images: finalImages,
       condition: condition || 'nuevo',
@@ -96,7 +95,7 @@ exports.createProduct = async (req, res) => {
 exports.updateProductStockOrStatus = async (req, res) => {
   try {
     const { id } = req.params;
-    const { stock, price, status } = req.body;
+    const { stock, price, discountPercent, status } = req.body;
 
     const product = await Product.findOne({ _id: id, seller: req.user.id });
     if (!product) return res.status(404).json({ error: 'Publicación no encontrada o no eres el vendedor' });
@@ -107,6 +106,9 @@ exports.updateProductStockOrStatus = async (req, res) => {
       if (product.stock === 0) product.status = 'sin_stock';
     }
     if (price !== undefined) product.price = Number(price);
+    if (discountPercent !== undefined) {
+      product.discountPercent = Math.min(90, Math.max(0, Number(discountPercent)));
+    }
     if (status !== undefined) product.status = status;
 
     await product.save();

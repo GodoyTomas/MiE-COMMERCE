@@ -1,18 +1,28 @@
 // miecommerce/src/controllers/orderAndReviewController.js
-const { createCheckoutOrder } = require('../services/checkoutService');
-const { holdFundsInEscrow, releaseEscrowFunds } = require('../services/escrowService');
+const { createCheckoutOrder, VALID_COUPONS } = require('../services/checkoutService');
+const { holdFundsInEscrow, releaseEscrowFunds, refundDisputedOrder } = require('../services/escrowService');
+const { pushNotification } = require('../services/notificationService');
 const Order = require('../models/Order');
 const Review = require('../models/Review');
 const User = require('../models/User');
 const { getIO } = require('../config/socket');
 
-// 1. Iniciar compra (Soporta QR, Tarjetas o Saldo de Billetera 'wallet')
+// Validar un cupón promocional desde el modal de Checkout
+exports.validateCoupon = (req, res) => {
+  const code = (req.params.code || '').trim().toUpperCase();
+  const discountPercent = VALID_COUPONS[code];
+  if (!discountPercent) {
+    return res.status(404).json({ error: 'Cupón inválido o expirado. Prueba MIE10, CYBER20 o ENVIO5' });
+  }
+  res.json({ code, discountPercent });
+};
+
+// 1. Iniciar compra con soporte para Cupones y Ofertas Relámpago
 exports.checkout = async (req, res) => {
   try {
-    const { items, paymentMethod, shipping } = req.body;
-    const result = await createCheckoutOrder(req.user.id, items, paymentMethod, shipping);
+    const { items, paymentMethod, shipping, couponCode } = req.body;
+    const result = await createCheckoutOrder(req.user.id, items, paymentMethod, shipping, couponCode);
 
-    // Si el usuario eligió pagar con su Saldo Disponible de Billetera
     if (paymentMethod === 'wallet') {
       const order = await Order.findById(result.orderId);
       const updatedBuyer = await User.findOneAndUpdate(
@@ -48,7 +58,7 @@ exports.checkout = async (req, res) => {
   }
 };
 
-// 2. Webhook de pasarela de pagos (QR / Tarjeta)
+// 2. Webhook de pasarela de pagos
 exports.paymentWebhook = async (req, res) => {
   try {
     const orderId = req.body.external_reference || req.body.orderId;
@@ -73,7 +83,7 @@ exports.paymentWebhook = async (req, res) => {
   }
 };
 
-// 3. Vendedor despacha el paquete y asigna código de seguimiento
+// 3. Vendedor despacha el paquete
 exports.dispatchOrder = async (req, res) => {
   try {
     const { orderId } = req.params;
@@ -114,6 +124,12 @@ exports.dispatchOrder = async (req, res) => {
       trackingCode: finalTracking,
       stage: 'Despachado en sucursal'
     });
+
+    await pushNotification(
+      order.buyer,
+      `🚚 Tu compra fue despachada por ${selectedCarrier}. Código de seguimiento: ${finalTracking}`,
+      'shipping'
+    );
 
     res.json({ message: 'Envío despachado y código enviado al comprador', order });
   } catch (error) {
@@ -156,13 +172,19 @@ exports.updateShippingStage = async (req, res) => {
       stage: stageLabels[shippingStatus] || shippingStatus
     });
 
+    await pushNotification(
+      order.buyer,
+      `📦 Actualización de envío (${order.shipping.trackingCode}): ${stageLabels[shippingStatus] || shippingStatus}`,
+      'shipping'
+    );
+
     res.json(order);
   } catch (error) {
     res.status(500).json({ error: 'Error al actualizar el seguimiento' });
   }
 };
 
-// 5. CHAT PRIVADO POST-VENTA EN TIEMPO REAL (COMPRADOR <-> VENDEDOR)
+// 5. Chat privado post-venta
 exports.sendOrderMessage = async (req, res) => {
   try {
     const { orderId } = req.params;
@@ -188,14 +210,15 @@ exports.sendOrderMessage = async (req, res) => {
     order.messages.push(newMsg);
     await order.save();
 
-    // Notificar en tiempo real a la contraparte
     if (isBuyer) {
       const sellerIds = [...new Set(order.items.map(i => i.seller.toString()))];
-      sellerIds.forEach(sId => {
+      for (const sId of sellerIds) {
         getIO().to(`user_${sId}`).emit('nuevo_mensaje_orden', { orderId: order._id, message: newMsg });
-      });
+        await pushNotification(sId, `📩 Mensaje de ${req.user.name} en Orden #${order._id.toString().slice(-6)}: "${text.trim()}"`, 'chat');
+      }
     } else {
       getIO().to(`user_${order.buyer}`).emit('nuevo_mensaje_orden', { orderId: order._id, message: newMsg });
+      await pushNotification(order.buyer, `📩 Mensaje del vendedor en Orden #${order._id.toString().slice(-6)}: "${text.trim()}"`, 'chat');
     }
 
     res.status(201).json({ messages: order.messages });
@@ -204,7 +227,65 @@ exports.sendOrderMessage = async (req, res) => {
   }
 };
 
-// 6. Confirmar recepción del producto
+// 6. CENTRO DE RECLAMOS Y MEDIACIÓN: Comprador abre un reclamo (Congela Escrow)
+exports.openDispute = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const { reason } = req.body;
+    if (!reason || !reason.trim()) {
+      return res.status(400).json({ error: 'Debes indicar el motivo del reclamo.' });
+    }
+
+    const order = await Order.findOneAndUpdate(
+      { _id: orderId, buyer: req.user.id, status: { $in: ['pagado_en_escrow', 'en_camino'] } },
+      {
+        status: 'en_reclamo',
+        dispute: {
+          isOpen: true,
+          reason: reason.trim(),
+          resolution: null,
+          openedAt: new Date()
+        },
+        $push: {
+          'shipping.history': {
+            stage: '⚠️ Reclamo / Mediación abierta',
+            description: `Motivo del comprador: ${reason.trim()}. Fondos congelados en Escrow.`,
+            updatedAt: new Date()
+          }
+        }
+      },
+      { new: true }
+    );
+
+    if (!order) return res.status(400).json({ error: 'No se puede abrir reclamo en esta orden.' });
+
+    const sellerIds = [...new Set(order.items.map(i => i.seller.toString()))];
+    for (const sId of sellerIds) {
+      await pushNotification(
+        sId,
+        `⚠️ Reclamo abierto en Orden #${order._id.toString().slice(-6)}: "${reason.trim()}". Fondos retenidos en mediación.`,
+        'dispute'
+      );
+    }
+
+    res.json({ message: 'Reclamo abierto. Tus fondos siguen protegidos en Escrow.', order });
+  } catch (error) {
+    res.status(500).json({ error: 'Error al abrir el reclamo' });
+  }
+};
+
+// 7. Vendedor reembolsa el dinero al comprador desde el Centro de Mediación
+exports.resolveDisputeWithRefund = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const order = await refundDisputedOrder(orderId, req.user.id);
+    res.json({ message: 'Orden reembolsada al comprador y stock recuperado.', order });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+};
+
+// 8. Confirmar recepción del producto
 exports.confirmDelivery = async (req, res) => {
   try {
     const { orderId } = req.params;
@@ -227,7 +308,7 @@ exports.confirmDelivery = async (req, res) => {
   }
 };
 
-// 7. Calificar satisfacción del artículo (1 a 5 estrellas)
+// 9. Calificar satisfacción del artículo (1 a 5 estrellas)
 exports.createReview = async (req, res) => {
   try {
     const { orderId, productId, rating, comment } = req.body;

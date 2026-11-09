@@ -2,6 +2,7 @@
 const Question = require('../models/Question');
 const Product = require('../models/Product');
 const { getIO } = require('../config/socket');
+const { pushNotification } = require('../services/notificationService');
 
 exports.askQuestion = async (req, res) => {
   try {
@@ -20,14 +21,18 @@ exports.askQuestion = async (req, res) => {
       questionText
     });
 
-    // 1. Alerta instantánea en el panel del vendedor
     getIO().to(`user_${product.seller}`).emit('nueva_pregunta_recibida', {
       productId: product._id,
       productTitle: product.title,
       question
     });
 
-    // 2. Actualización en vivo en la página del producto
+    await pushNotification(
+      product.seller,
+      `💬 Pregunta en "${product.title}": "${questionText}"`,
+      'question'
+    );
+
     getIO().to(`product_${product._id}`).emit('actualizar_preguntas_articulo', question);
 
     res.status(201).json(question);
@@ -49,7 +54,6 @@ exports.answerQuestion = async (req, res) => {
 
     if (!question) return res.status(404).json({ error: 'Pregunta no encontrada o ya respondida' });
 
-    // Notificar en vivo al comprador que hizo la pregunta
     getIO().to(`user_${question.buyer}`).emit('pregunta_respondida', {
       productId: question.product._id,
       productTitle: question.product.title,
@@ -57,7 +61,12 @@ exports.answerQuestion = async (req, res) => {
       answerText: question.answerText
     });
 
-    // Refrescar la caja de comentarios para quienes estén viendo el artículo
+    await pushNotification(
+      question.buyer,
+      `✅ Respondieron tu pregunta en "${question.product.title}": "${answerText}"`,
+      'answer'
+    );
+
     getIO().to(`product_${question.product._id}`).emit('actualizar_preguntas_articulo', question);
 
     res.json(question);

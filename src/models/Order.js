@@ -7,9 +7,13 @@ const orderSchema = new mongoose.Schema({
     product: { type: mongoose.Schema.Types.ObjectId, ref: 'Product', required: true },
     seller: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     title: String,
+    category: { type: String, default: 'General' },
     quantity: { type: Number, required: true, min: 1 },
     unitPrice: { type: Number, required: true }
   }],
+  subtotalAmount: { type: Number, default: 0 },
+  couponCode: { type: String, default: null },
+  discountAmount: { type: Number, default: 0 },
   totalAmount: { type: Number, required: true },
   paymentMethod: {
     type: String,
@@ -19,7 +23,15 @@ const orderSchema = new mongoose.Schema({
   paymentExternalId: { type: String, default: null },
   status: {
     type: String,
-    enum: ['pendiente_pago', 'pagado_en_escrow', 'en_camino', 'entregado_fondos_liberados', 'cancelada'],
+    enum: [
+      'pendiente_pago',
+      'pagado_en_escrow',
+      'en_camino',
+      'en_reclamo',
+      'entregado_fondos_liberados',
+      'reembolsada',
+      'cancelada'
+    ],
     default: 'pendiente_pago',
     index: true
   },
@@ -49,7 +61,14 @@ const orderSchema = new mongoose.Schema({
       updatedAt: { type: Date, default: Date.now }
     }]
   },
-  // CHAT PRIVADO POST-VENTA (COMPRADOR <-> VENDEDOR)
+  // CENTRO DE RECLAMOS Y MEDIACIÓN ESCROW
+  dispute: {
+    isOpen: { type: Boolean, default: false },
+    reason: { type: String, default: null },
+    resolution: { type: String, default: null },
+    openedAt: { type: Date, default: null },
+    resolvedAt: { type: Date, default: null }
+  },
   messages: [{
     sender: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     senderName: String,

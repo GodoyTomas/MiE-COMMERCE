@@ -1,4 +1,4 @@
-// src/models/Product.js
+// miecommerce/src/models/Product.js
 const mongoose = require('mongoose');
 
 const productSchema = new mongoose.Schema({
@@ -7,12 +7,12 @@ const productSchema = new mongoose.Schema({
   description: { type: String, required: true },
   category: { type: String, required: true, index: true },
   price: { type: Number, required: true, min: 0 },
+  discountPercent: { type: Number, default: 0, min: 0, max: 90 },
   stock: { type: Number, required: true, min: 0 },
   soldCount: { type: Number, default: 0 },
   images: [{ type: String }],
   condition: { type: String, enum: ['nuevo', 'usado', 'reacondicionado'], default: 'nuevo' },
   status: { type: String, enum: ['activa', 'pausada', 'sin_stock'], default: 'activa' },
-  // Métricas precalculadas para renderizado rápido en la vista del artículo
   ratingSummary: {
     average: { type: Number, default: 0, min: 0, max: 5 },
     count: { type: Number, default: 0 },
@@ -26,7 +26,6 @@ const productSchema = new mongoose.Schema({
   }
 }, { timestamps: true });
 
-// Índice de texto compuesto para el buscador por nombre y categoría
 productSchema.index({ title: 'text', description: 'text', category: 'text' });
 
 module.exports = mongoose.model('Product', productSchema);

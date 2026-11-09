@@ -5,13 +5,24 @@ const { MercadoPagoConfig, Preference } = require('mercadopago');
 
 const mpClient = new MercadoPagoConfig({ accessToken: process.env.MP_ACCESS_TOKEN });
 
-exports.createCheckoutOrder = async (buyerId, items, paymentMethodType, shippingData) => {
+const VALID_COUPONS = {
+  'MIE10': 10,
+  'CYBER20': 20,
+  'ENVIO5': 5
+};
+
+exports.VALID_COUPONS = VALID_COUPONS;
+
+exports.createCheckoutOrder = async (buyerId, items, paymentMethodType, shippingData, couponCode) => {
   const reservedItems = [];
 
   try {
-    let totalAmount = 0;
+    let subtotalAmount = 0;
     const mpItems = [];
     const orderItems = [];
+
+    const normalizedCoupon = couponCode ? couponCode.trim().toUpperCase() : null;
+    const couponPercent = (normalizedCoupon && VALID_COUPONS[normalizedCoupon]) ? VALID_COUPONS[normalizedCoupon] : 0;
 
     for (const item of items) {
       const updatedProduct = await Product.findOneAndUpdate(
@@ -30,28 +41,40 @@ exports.createCheckoutOrder = async (buyerId, items, paymentMethodType, shipping
         await Product.findByIdAndUpdate(updatedProduct._id, { status: 'sin_stock' });
       }
 
-      totalAmount += updatedProduct.price * item.quantity;
+      // Aplicar descuento de Oferta Relámpago del producto + Cupón si existe
+      const prodDisc = updatedProduct.discountPercent || 0;
+      const priceAfterOffer = Math.round(updatedProduct.price * (1 - prodDisc / 100));
+      const finalUnitPrice = Math.round(priceAfterOffer * (1 - couponPercent / 100));
+
+      subtotalAmount += priceAfterOffer * item.quantity;
 
       orderItems.push({
         product: updatedProduct._id,
         seller: updatedProduct.seller,
         title: updatedProduct.title,
+        category: updatedProduct.category || 'General',
         quantity: Number(item.quantity),
-        unitPrice: Number(updatedProduct.price)
+        unitPrice: finalUnitPrice
       });
 
       mpItems.push({
         id: updatedProduct._id.toString(),
         title: updatedProduct.title,
         quantity: Number(item.quantity),
-        unit_price: Number(updatedProduct.price),
+        unit_price: finalUnitPrice,
         currency_id: 'ARS'
       });
     }
 
+    const totalAmount = orderItems.reduce((acc, i) => acc + i.unitPrice * i.quantity, 0);
+    const discountAmount = Math.max(0, subtotalAmount - totalAmount);
+
     const order = await Order.create({
       buyer: buyerId,
       items: orderItems,
+      subtotalAmount,
+      couponCode: couponPercent > 0 ? normalizedCoupon : null,
+      discountAmount,
       totalAmount,
       paymentMethod: paymentMethodType,
       status: 'pendiente_pago',

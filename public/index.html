@@ -18,7 +18,7 @@
         </a>
 
         <form id="search-form" class="search-bar" onsubmit="handleSearch(event)">
-          <input type="text" id="search-input" placeholder="Buscar productos, marcas y más..." />
+          <input type="text" id="search-input" placeholder="Buscar productos, marcas y ofertas relámpago..." />
           <select id="search-category">
             <option value="">Todas las categorías</option>
             <option value="Tecnología">Tecnología</option>
@@ -31,12 +31,28 @@
           <button type="submit" title="Buscar">🔍</button>
         </form>
 
-        <div style="display:flex; align-items:center; gap:12px">
+        <div style="display:flex; align-items:center; gap:10px; position:relative">
           <div class="nav-user" id="nav-user-area">
             <button class="btn-primary" onclick="openModal('modal-auth')">Ingresar / Crear cuenta</button>
           </div>
-          <button class="btn-outline" style="position:relative; font-weight:700" onclick="openCartModal()">
-            🛒 Carrito <span id="cart-badge" style="background:#d32f2f; color:#fff; border-radius:50%; padding:2px 7px; font-size:0.75rem">0</span>
+
+          <!-- CAMPANITA DE NOTIFICACIONES PERSISTENTES -->
+          <div style="position:relative">
+            <button class="btn-outline" style="font-weight:700; padding:8px 12px" onclick="toggleNotificationsDropdown()">
+              🔔 <span id="notif-badge" style="background:#ff5722; color:#fff; border-radius:50%; padding:1px 6px; font-size:0.74rem">0</span>
+            </button>
+            <div id="notif-dropdown" class="hidden" style="position:absolute; right:0; top:42px; width:330px; background:#fff; border-radius:8px; box-shadow:0 8px 24px rgba(0,0,0,0.18); padding:12px; z-index:250; max-height:360px; overflow-y:auto">
+              <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #eee; padding-bottom:8px; margin-bottom:8px">
+                <strong>🔔 Notificaciones</strong>
+                <small style="color:#3483fa; cursor:pointer" onclick="markAllNotifsRead()">Marcar leídas</small>
+              </div>
+              <div id="notif-list-items" style="font-size:0.84rem; display:flex; flex-direction:column; gap:8px"></div>
+            </div>
+          </div>
+
+          <!-- BOTÓN CARRITO -->
+          <button class="btn-outline" style="position:relative; font-weight:700; padding:8px 12px" onclick="openCartModal()">
+            🛒 <span id="cart-badge" style="background:#d32f2f; color:#fff; border-radius:50%; padding:1px 6px; font-size:0.74rem">0</span>
           </button>
         </div>
       </div>
@@ -50,7 +66,7 @@
           <span onclick="quickFilter('Herramientas')">Herramientas</span>
           <span onclick="quickFilter('Deportes')">Deportes</span>
         </div>
-        <div id="live-status" class="live-indicator">🟢 Tiempo real activo</div>
+        <div id="live-status" class="live-indicator">⚡ Cupones activos: <strong>MIE10</strong> (10% OFF) | <strong>CYBER20</strong> (20% OFF)</div>
       </div>
     </div>
   </header>
@@ -177,12 +193,19 @@
     </div>
   </div>
 
-  <!-- MODAL DE CHECKOUT (ENVÍO + QR + TARJETA + SALDO DE BILLETERA) -->
+  <!-- MODAL DE CHECKOUT (ENVÍO + CUPÓN PROMOCIONAL + QR + TARJETA + BILLETERA) -->
   <div id="modal-checkout" class="modal-overlay">
     <div class="modal-box modal-checkout-box" style="max-height:92vh; overflow-y:auto">
       <button class="modal-close" onclick="closeModal('modal-checkout')">&times;</button>
       <h2>Finalizar Compra Protegida 🛡️</h2>
-      <p id="checkout-summary-text" style="margin:8px 0 14px; color:#555"></p>
+      <p id="checkout-summary-text" style="margin:8px 0 12px; color:#333; font-weight:600"></p>
+
+      <!-- CUPÓN DE DESCUENTO -->
+      <div style="display:flex; gap:8px; margin-bottom:14px; align-items:center; background:#e8f5e9; padding:10px; border-radius:6px; border:1px dashed #00a650">
+        <span style="font-size:0.85rem; font-weight:600; color:#1b5e20">🎟️ Cupón:</span>
+        <input type="text" id="checkout-coupon-input" placeholder="Ej: MIE10 o CYBER20" style="flex:1; padding:7px; border:1px solid #ccc; border-radius:4px; text-transform:uppercase" />
+        <button type="button" class="btn-outline" onclick="applyCouponCode()">Aplicar</button>
+      </div>
 
       <div class="shipping-form-box" style="background:#f8f9fa; padding:14px; border-radius:6px; margin-bottom:16px; border:1px solid #e0e0e0">
         <h4 style="margin-bottom:10px; color:#2d3277">🚚 1. Datos de Envío a Domicilio / Sucursal</h4>
@@ -223,7 +246,6 @@
         <button type="button" id="pay-tab-wallet" onclick="selectPaymentTab('wallet')">💰 Saldo Billetera</button>
       </div>
 
-      <!-- Opción 1: QR Dinámico -->
       <div id="payment-panel-qr" class="payment-panel">
         <div class="qr-box">
           <img id="qr-image" src="" alt="Código QR de Pago" />
@@ -232,7 +254,6 @@
         </div>
       </div>
 
-      <!-- Opción 2: Tarjeta -->
       <div id="payment-panel-card" class="payment-panel hidden">
         <div class="credit-card-preview">
           <div class="cc-chip"></div>
@@ -269,11 +290,10 @@
         </div>
       </div>
 
-      <!-- Opción 3: Saldo de Billetera -->
       <div id="payment-panel-wallet" class="payment-panel hidden">
         <div class="qr-box" style="border-color:#00a650; background:#f1f8e9">
           <h3 style="color:#1b5e20">💰 Pagar con Saldo Disponible en miecommerce</h3>
-          <p style="margin-top:8px; color:#333">Usa el dinero liberado de tus ventas para comprar sin comisiones ni tarjetas.</p>
+          <p style="margin-top:8px; color:#333">Usa el dinero liberado de tus ventas o reembolsos para comprar en el acto.</p>
         </div>
       </div>
 

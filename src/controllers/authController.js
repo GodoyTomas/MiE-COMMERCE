@@ -112,3 +112,16 @@ exports.withdrawFunds = async (req, res) => {
     res.status(500).json({ error: 'Error procesando el retiro' });
   }
 };
+
+// Agregar al final de miecommerce/src/controllers/authController.js
+exports.markNotificationsRead = async (req, res) => {
+  try {
+    await User.updateOne(
+      { _id: req.user.id },
+      { $set: { 'notifications.$[].read': true } }
+    );
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Error al marcar notificaciones' });
+  }
+};

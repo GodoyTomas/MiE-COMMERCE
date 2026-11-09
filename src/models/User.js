@@ -22,6 +22,12 @@ const userSchema = new mongoose.Schema({
     cbuOrAlias: String,
     createdAt: { type: Date, default: Date.now }
   }],
+  notifications: [{
+    text: String,
+    type: { type: String, default: 'info' },
+    read: { type: Boolean, default: false },
+    createdAt: { type: Date, default: Date.now }
+  }],
   recentlyViewed: [{
     product: { type: mongoose.Schema.Types.ObjectId, ref: 'Product' },
     category: { type: String },
