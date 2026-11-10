@@ -8,6 +8,7 @@ const orderSchema = new mongoose.Schema({
     seller: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     title: String,
     category: { type: String, default: 'General' },
+    selectedVariant: { type: String, default: 'Estándar' },
     quantity: { type: Number, required: true, min: 1 },
     unitPrice: { type: Number, required: true }
   }],

@@ -1,0 +1,37 @@
+PROPRIETARY SOFTWARE LICENSE / LICENCIA DE SOFTWARE PROPIETARIO
+Copyright (c) 2026 Tomás Godoy (@GodoyTomas). Todos los derechos reservados / All Rights Reserved.
+
+--- ESPAÑOL ---
+
+AVISO DE PROPIEDAD INTELECTUAL Y DERECHOS RESERVADOS:
+
+El código fuente, la arquitectura de software, los modelos de datos, las interfaces gráficas, 
+los algoritmos transaccionales (incluyendo el motor de Escrow y logística) y la documentación 
+asociada a este proyecto ("miecommerce") son propiedad intelectual exclusiva de Tomás Godoy.
+
+Queda estrictamente PROHIBIDO a cualquier persona física o jurídica, sin la autorización previa, 
+expresa y por escrito del autor:
+1. Copiar, reproducir, clonar o duplicar total o parcialmente el código fuente o sus activos.
+2. Modificar, adaptar, traducir, realizar ingeniería inversa o crear obras derivadas.
+3. Distribuir, sublicenciar, vender, alquilar, publicar o explotar comercialmente este software.
+4. Eliminar o alterar los avisos de derechos de autor y marcas de propiedad en los archivos.
+
+El acceso de lectura a este repositorio con fines de portafolio o evaluación académica/profesional 
+NO otorga ningún tipo de licencia, cesión de derechos ni permiso de uso sobre el software. 
+Protegido bajo la Ley N° 11.723 de Régimen Legal de la Propiedad Intelectual (República Argentina) 
+y los tratados internacionales de derechos de autor (Convenio de Berna y OMPI).
+
+--- ENGLISH ---
+
+PROPRIETARY AND CONFIDENTIAL NOTICE:
+
+All source code, software architecture, data models, user interfaces, transactional algorithms, 
+and documentation contained within this repository ("miecommerce") are the exclusive intellectual 
+property of Tomás Godoy (@GodoyTomas).
+
+Unauthorized copying, modification, distribution, sublicensing, commercial exploitation, or creation 
+of derivative works of this software, via any medium, is strictly PROHIBITED without the prior 
+express written permission of the copyright holder. Viewing this repository for portfolio or 
+evaluation purposes does NOT grant any license or right to use the software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED.

@@ -11,6 +11,7 @@ const productSchema = new mongoose.Schema({
   stock: { type: Number, required: true, min: 0 },
   soldCount: { type: Number, default: 0 },
   images: [{ type: String }],
+  variants: [{ type: String, trim: true }], // Ej: ["Color: Negro", "Color: Plata"] o ["Talle M", "Talle L"]
   condition: { type: String, enum: ['nuevo', 'usado', 'reacondicionado'], default: 'nuevo' },
   status: { type: String, enum: ['activa', 'pausada', 'sin_stock'], default: 'activa' },
   ratingSummary: {

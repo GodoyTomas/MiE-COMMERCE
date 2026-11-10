@@ -1,17 +1,19 @@
 // miecommerce/src/controllers/productController.js
 const Product = require('../models/Product');
+const User = require('../models/User');
 const Question = require('../models/Question');
 const Review = require('../models/Review');
 const { trackProductView } = require('./carouselController');
 
 exports.searchProducts = async (req, res) => {
   try {
-    const { q, category, minPrice, maxPrice, condition, sort = '-soldCount', page = 1, limit = 20 } = req.query;
+    const { q, category, minPrice, maxPrice, condition, sellerId, sort = '-soldCount', page = 1, limit = 20 } = req.query;
     const filter = { status: 'activa', stock: { $gt: 0 } };
 
     if (q) filter.$text = { $search: q };
     if (category) filter.category = category;
     if (condition) filter.condition = condition;
+    if (sellerId) filter.seller = sellerId;
     if (minPrice || maxPrice) {
       filter.price = {};
       if (minPrice) filter.price.$gte = Number(minPrice);
@@ -25,7 +27,7 @@ exports.searchProducts = async (req, res) => {
         .sort(q ? { score: { $meta: 'textScore' } } : sort)
         .skip(skip)
         .limit(Number(limit))
-        .populate('seller', 'name reputation.sellerRating'),
+        .populate('seller', 'name reputation'),
       Product.countDocuments(filter)
     ]);
 
@@ -35,18 +37,55 @@ exports.searchProducts = async (req, res) => {
   }
 };
 
+// Autocompletado instantáneo en la barra de búsqueda
+exports.getSearchSuggestions = async (req, res) => {
+  try {
+    const q = (req.query.q || '').trim();
+    if (q.length < 2) return res.json([]);
+
+    const regex = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+    const suggestions = await Product.find({
+      status: 'activa',
+      stock: { $gt: 0 },
+      $or: [{ title: regex }, { category: regex }]
+    })
+      .select('_id title category price discountPercent images')
+      .limit(6);
+
+    res.json(suggestions);
+  } catch (error) {
+    res.json([]);
+  }
+};
+
+// Página de Tienda Oficial / Perfil Público del Vendedor
+exports.getSellerPublicStore = async (req, res) => {
+  try {
+    const { sellerId } = req.params;
+    const [seller, products] = await Promise.all([
+      User.findById(sellerId).select('name reputation createdAt'),
+      Product.find({ seller: sellerId, status: 'activa', stock: { $gt: 0 } }).sort('-soldCount')
+    ]);
+
+    if (!seller) return res.status(404).json({ error: 'Tienda o vendedor no encontrado' });
+
+    res.json({ seller, products });
+  } catch (error) {
+    res.status(500).json({ error: 'Error al cargar la tienda del vendedor' });
+  }
+};
+
 exports.getProductDetails = async (req, res) => {
   try {
     const { id } = req.params;
     const [product, questions, reviews] = await Promise.all([
-      Product.findById(id).populate('seller', 'name reputation'),
+      Product.findById(id).populate('seller', 'name reputation createdAt'),
       Question.find({ product: id }).sort('-createdAt').limit(15).populate('buyer', 'name'),
       Review.find({ product: id }).sort('-createdAt').limit(10).populate('buyer', 'name')
     ]);
 
     if (!product) return res.status(404).json({ error: 'Artículo no encontrado' });
 
-    // Si el usuario está logueado, registra la categoría vista para el Carrusel Dinámico
     if (req.user) {
       await trackProductView(req.user.id, product);
     }
@@ -59,7 +98,7 @@ exports.getProductDetails = async (req, res) => {
 
 exports.createProduct = async (req, res) => {
   try {
-    const { title, description, category, price, discountPercent, stock, imageUrl, images, condition } = req.body;
+    const { title, description, category, price, discountPercent, stock, variants, imageUrl, images, condition } = req.body;
 
     let finalImages = [];
     if (req.files && req.files.length > 0) {
@@ -74,6 +113,13 @@ exports.createProduct = async (req, res) => {
       finalImages.push('https://images.unsplash.com/photo-1526170375885-4d8ecf77b99f?w=600');
     }
 
+    let parsedVariants = [];
+    if (typeof variants === 'string' && variants.trim() !== '') {
+      parsedVariants = variants.split(',').map(v => v.trim()).filter(Boolean);
+    } else if (Array.isArray(variants)) {
+      parsedVariants = variants;
+    }
+
     const product = await Product.create({
       seller: req.user.id,
       title,
@@ -83,6 +129,7 @@ exports.createProduct = async (req, res) => {
       discountPercent: Math.min(90, Math.max(0, Number(discountPercent || 0))),
       stock: Number(stock),
       images: finalImages,
+      variants: parsedVariants,
       condition: condition || 'nuevo',
       status: Number(stock) > 0 ? 'activa' : 'sin_stock'
     });

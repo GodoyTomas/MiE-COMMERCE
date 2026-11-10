@@ -21,6 +21,8 @@ router.post('/wallet/withdraw', verifyToken, authController.withdrawFunds);
 // 2. EXPLORADOR, CARRUSEL Y ARTÍCULOS
 router.get('/products/carousel', optionalAuth, carouselController.getDynamicCarousel);
 router.get('/products/search', productController.searchProducts);
+router.get('/products/suggestions', productController.getSearchSuggestions);
+router.get('/sellers/:sellerId/store', productController.getSellerPublicStore);
 router.get('/products/:id', optionalAuth, productController.getProductDetails);
 router.post('/products', verifyToken, upload.array('photos', 5), productController.createProduct);
 router.patch('/products/:id', verifyToken, productController.updateProductStockOrStatus);

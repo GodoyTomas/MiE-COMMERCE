@@ -9,7 +9,10 @@ let selectedPaymentMethod = 'qr';
 let cart = [];
 let activeChatOrderId = null;
 let cachedOrdersMap = {};
+let cachedSalesList = [];
+let cachedWithdrawalsList = [];
 let userNotifications = [];
+let autocompleteTimer = null;
 
 try {
   currentUser = JSON.parse(localStorage.getItem('miecommerce_user') || 'null');
@@ -20,13 +23,70 @@ try {
 }
 
 window.addEventListener('DOMContentLoaded', () => {
+  initTheme();
   renderNavbarUser();
   updateCartBadge();
   initRealtimeSocket();
   loadCarousel();
   loadProducts();
   if (currentToken) refreshNotificationsFromServer();
+
+  // Cerrar autocompletado al hacer clic afuera
+  document.addEventListener('click', (e) => {
+    const sugg = document.getElementById('search-suggestions');
+    if (sugg && !e.target.closest('.search-wrapper')) {
+      sugg.classList.add('hidden');
+    }
+  });
 });
+
+// =====================================================
+// 0. MODO OSCURO Y MEDALLAS DE REPUTACIÓN (TERMÓMETRO)
+// =====================================================
+function initTheme() {
+  const isDark = localStorage.getItem('miecommerce_dark') === 'true';
+  if (isDark) document.body.classList.add('dark-mode');
+  const btn = document.getElementById('btn-theme-toggle');
+  if (btn) btn.textContent = isDark ? '☀️' : '🌙';
+}
+
+function toggleDarkMode() {
+  const isDark = document.body.classList.toggle('dark-mode');
+  localStorage.setItem('miecommerce_dark', String(isDark));
+  const btn = document.getElementById('btn-theme-toggle');
+  if (btn) btn.textContent = isDark ? '☀️' : '🌙';
+}
+
+function getSellerReputationBadge(reputation) {
+  const sales = reputation?.totalSales || 0;
+  const rating = reputation?.sellerRating || 5.0;
+
+  let medal = '🏅 Vendedor Verificado';
+  let level = 4; // 1 (Rojo) a 5 (Verde oscuro)
+
+  if (sales >= 35 && rating >= 4.7) {
+    medal = '🏆 MercadoLíder Platinum';
+    level = 5;
+  } else if (sales >= 15 && rating >= 4.5) {
+    medal = '🥇 MercadoLíder Gold';
+    level = 5;
+  } else if (sales >= 5 && rating >= 4.0) {
+    medal = '🎖️ MercadoLíder';
+    level = 5;
+  } else if (rating < 3.0) {
+    medal = '⚠️ Atención con demoras';
+    level = 2;
+  }
+
+  const colors = ['#f44336', '#ff9800', '#ffeb3b', '#8bc34a', '#00a650'];
+  const thermometerHTML = `
+    <div class="rep-thermometer">
+      ${colors.map((c, idx) => `<div class="rep-bar ${idx + 1 === level ? 'active' : ''}" style="background:${c}"></div>`).join('')}
+    </div>
+  `;
+
+  return { medal, sales, rating, thermometerHTML };
+}
 
 // =====================================================
 // 1. SOCKET.IO Y CAMPANITA DE NOTIFICACIONES
@@ -112,9 +172,9 @@ function renderNotificationsBell() {
   }
 
   list.innerHTML = userNotifications.slice(0, 15).map(n => `
-    <div style="padding:8px; border-radius:6px; background:${n.read ? '#f9f9f9' : '#fff8e1'}; border-left:3px solid ${n.read ? '#ccc' : '#ff9800'}">
+    <div style="padding:8px; border-radius:6px; background:${n.read ? '#f9f9f9' : '#fff8e1'}; color:#222; border-left:3px solid ${n.read ? '#ccc' : '#ff9800'}">
       <div>${n.text}</div>
-      <small style="color:#888">${new Date(n.createdAt).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}</small>
+      <small style="color:#666">${new Date(n.createdAt).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}</small>
     </div>
   `).join('');
 }
@@ -146,7 +206,7 @@ function showToast(message) {
 }
 
 // =====================================================
-// 2. NAVEGACIÓN Y CABECERA
+// 2. NAVEGACIÓN, AUTOCOMPLETADO Y TIENDA OFICIAL
 // =====================================================
 function getAuthHeaders(isFormData = false) {
   const headers = {};
@@ -190,8 +250,85 @@ function navigate(viewName) {
   }
 }
 
+function handleSearchAutocomplete(query) {
+  clearTimeout(autocompleteTimer);
+  const box = document.getElementById('search-suggestions');
+  if (!box) return;
+
+  if (!query || query.trim().length < 2) {
+    box.classList.add('hidden');
+    return;
+  }
+
+  autocompleteTimer = setTimeout(async () => {
+    try {
+      const res = await fetch(`${API_URL}/products/suggestions?q=${encodeURIComponent(query.trim())}`);
+      const items = await res.json();
+      if (!items || items.length === 0) {
+        box.classList.add('hidden');
+        return;
+      }
+
+      box.innerHTML = items.map(item => {
+        const finalPrice = getEffectivePrice(item.price, item.discountPercent);
+        return `
+          <div class="suggestion-item" onclick="selectSuggestion('${item._id}')">
+            <div>
+              <strong>🔍 ${item.title}</strong>
+              <small style="color:#3483fa; margin-left:6px">en ${item.category}</small>
+            </div>
+            <strong>$ ${finalPrice.toLocaleString('es-AR')}</strong>
+          </div>
+        `;
+      }).join('');
+      box.classList.remove('hidden');
+    } catch (e) {}
+  }, 180);
+}
+
+function selectSuggestion(productId) {
+  const box = document.getElementById('search-suggestions');
+  if (box) box.classList.add('hidden');
+  openProductDetail(productId);
+}
+
+// Vista de Tienda Oficial / Perfil Público del Vendedor
+async function openSellerStore(sellerId) {
+  try {
+    const res = await fetch(`${API_URL}/sellers/${sellerId}/store`);
+    const data = await res.json();
+    if (!res.ok) return alert(data.error || 'No se pudo cargar la tienda');
+
+    const { seller, products } = data;
+    const rep = getSellerReputationBadge(seller.reputation);
+
+    navigate('store');
+    document.getElementById('store-view-container').innerHTML = `
+      <div class="dash-panel" style="border-top:5px solid #3483fa; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:16px">
+        <div>
+          <span style="background:#e3edfb; color:#2d3277; padding:4px 10px; border-radius:4px; font-size:0.8rem; font-weight:700">${rep.medal}</span>
+          <h2 style="margin-top:8px">🏬 ${seller.name}</h2>
+          <small style="color:#666">Miembro oficial de miecommerce | +${rep.sales} ventas concretadas con Compra Protegida</small>
+        </div>
+        <div style="min-width:240px; text-align:right">
+          <strong>Nivel de Reputación: ⭐ ${rep.rating} / 5.0</strong>
+          ${rep.thermometerHTML}
+          <small style="color:#00a650; font-weight:600">✔ Despacha sus paquetes a tiempo</small>
+        </div>
+      </div>
+
+      <h3 style="margin:18px 0 12px">Catálogo disponible de ${seller.name} (${products.length} artículos)</h3>
+      <div class="products-grid">
+        ${products.map(p => renderProductCardHTML(p)).join('')}
+      </div>
+    `;
+  } catch (err) {
+    console.error('Error abriendo tienda:', err);
+  }
+}
+
 // =====================================================
-// 3. CARRITO MULTI-PRODUCTO Y FAVORITOS
+// 3. CARRITO MULTI-PRODUCTO CON VARIANTES Y FAVORITOS
 // =====================================================
 function updateCartBadge() {
   const totalQty = cart.reduce((acc, item) => acc + item.quantity, 0);
@@ -204,19 +341,25 @@ function getEffectivePrice(price, discountPercent = 0) {
   return Math.round(Number(price) * (1 - Number(discountPercent || 0) / 100));
 }
 
+function getSelectedVariantFromUI() {
+  const sel = document.getElementById('product-variant-select');
+  return sel ? sel.value : 'Estándar';
+}
+
 function addToCart(productId, title, unitPrice, maxStock, image) {
   const qtyInput = document.getElementById('buy-quantity');
   const qty = qtyInput ? Number(qtyInput.value || 1) : 1;
+  const selectedVariant = getSelectedVariantFromUI();
 
-  const existing = cart.find(i => i.productId === productId);
+  const existing = cart.find(i => i.productId === productId && i.selectedVariant === selectedVariant);
   if (existing) {
     existing.quantity = Math.min(existing.quantity + qty, maxStock);
   } else {
-    cart.push({ productId, title, unitPrice: Number(unitPrice), quantity: qty, image });
+    cart.push({ productId, title, unitPrice: Number(unitPrice), quantity: qty, selectedVariant, image });
   }
 
   updateCartBadge();
-  showToast(`🛒 "${title}" agregado al carrito.`);
+  showToast(`🛒 "${title}" (${selectedVariant}) agregado al carrito.`);
 }
 
 function openCartModal() {
@@ -232,7 +375,7 @@ function openCartModal() {
     container.innerHTML = cart.map((item, idx) => `
       <div class="qa-item" style="display:flex; justify-content:space-between; align-items:center">
         <div>
-          <strong>${item.title}</strong><br/>
+          <strong>${item.title}</strong> <span style="font-size:0.8rem; color:#3483fa">(${item.selectedVariant || 'Estándar'})</span><br/>
           <small>${item.quantity} u. x $${item.unitPrice.toLocaleString('es-AR')} = <strong>$${(item.unitPrice * item.quantity).toLocaleString('es-AR')}</strong></small>
         </div>
         <button class="btn-back" style="margin:0; color:#d32f2f" onclick="removeFromCart(${idx})">Quitar</button>
@@ -263,7 +406,13 @@ function checkoutFromCart() {
 
   const baseTotal = cart.reduce((acc, i) => acc + i.unitPrice * i.quantity, 0);
   pendingCheckoutData = {
-    items: cart.map(i => ({ productId: i.productId, title: i.title, unitPrice: i.unitPrice, quantity: i.quantity })),
+    items: cart.map(i => ({
+      productId: i.productId,
+      title: i.title,
+      unitPrice: i.unitPrice,
+      quantity: i.quantity,
+      selectedVariant: i.selectedVariant || 'Estándar'
+    })),
     baseTotal,
     total: baseTotal,
     couponCode: null,
@@ -293,7 +442,7 @@ async function toggleFavoriteProduct(productId, event) {
 }
 
 // =====================================================
-// 4. CARRUSEL Y EXPLORADOR DE ARTÍCULOS CON OFERTAS % OFF
+// 4. CARRUSEL Y EXPLORADOR DE ARTÍCULOS
 // =====================================================
 async function loadCarousel() {
   try {
@@ -380,6 +529,8 @@ function renderProductCardHTML(prod) {
 
 function handleSearch(e) {
   e.preventDefault();
+  const box = document.getElementById('search-suggestions');
+  if (box) box.classList.add('hidden');
   navigate('home');
 }
 
@@ -389,7 +540,7 @@ function quickFilter(category) {
 }
 
 // =====================================================
-// 5. DETALLE DEL ARTÍCULO + GALERÍA + OFERTA RELÁMPAGO
+// 5. DETALLE DEL ARTÍCULO + TERMÓMETRO + VARIANTES
 // =====================================================
 async function openProductDetail(productId, changeView = true) {
   try {
@@ -412,6 +563,8 @@ async function openProductDetail(productId, changeView = true) {
     const isFav = currentUser?.favorites?.includes(product._id);
     const disc = product.discountPercent || 0;
     const effectivePrice = getEffectivePrice(product.price, disc);
+    const variants = (product.variants && product.variants.length > 0) ? product.variants : ['Estándar'];
+    const rep = getSellerReputationBadge(product.seller?.reputation);
 
     document.getElementById('product-detail-container').innerHTML = `
       <div class="detail-top-grid">
@@ -426,7 +579,7 @@ async function openProductDetail(productId, changeView = true) {
             </div>
           ` : ''}
           <h3 style="margin-top:20px">Descripción del artículo</h3>
-          <p style="margin-top:10px; color:#555; line-height:1.6">${product.description}</p>
+          <p style="margin-top:10px; line-height:1.6">${product.description}</p>
         </div>
 
         <div class="buy-box">
@@ -449,6 +602,12 @@ async function openProductDetail(productId, changeView = true) {
           <div class="product-installments">Usa el cupón <strong>MIE10</strong> o <strong>CYBER20</strong> al pagar</div>
 
           <div class="stock-box">
+            <div style="margin-bottom:10px">
+              <label style="font-weight:600; display:block; margin-bottom:4px">🎨 Seleccionar Variante / Modelo:</label>
+              <select id="product-variant-select" style="width:100%; padding:7px; border-radius:4px; border:1px solid #ccc">
+                ${variants.map(v => `<option value="${v}">${v}</option>`).join('')}
+              </select>
+            </div>
             <strong>Stock disponible:</strong> ${product.stock} unidades registradas<br/>
             <label style="display:block; margin-top:8px">Cantidad:</label>
             <input type="number" id="buy-quantity" value="1" min="1" max="${product.stock}" style="width:90px; padding:6px; margin-top:4px" />
@@ -461,8 +620,20 @@ async function openProductDetail(productId, changeView = true) {
             🛒 Agregar al carrito
           </button>
 
-          <div style="font-size:0.82rem; color:#666; margin-top:14px">
-            🛡️ <strong>Compra Protegida con Escrow:</strong> Tu dinero se retiene y solo se libera a <strong>${product.seller?.name || 'el vendedor'}</strong> cuando confirmás que recibiste el paquete.
+          <!-- TARJETA DE REPUTACIÓN DEL VENDEDOR ESTILO MERCADO LIBRE -->
+          <div style="margin-top:18px; padding-top:14px; border-top:1px solid #eee">
+            <div style="font-size:0.85rem; font-weight:700; color:#00a650">${rep.medal}</div>
+            <div style="font-size:0.95rem; font-weight:600; margin-top:2px">Vendido por ${product.seller?.name || 'Tienda Oficial'}</div>
+            ${rep.thermometerHTML}
+            <div style="display:flex; justify-content:space-between; font-size:0.78rem; color:#666; margin-bottom:10px">
+              <span>+${rep.sales} ventas concretadas</span>
+              <span>⭐ ${rep.rating} atención</span>
+            </div>
+            ${product.seller?._id ? `
+              <button class="btn-outline full-width" style="font-size:0.83rem" onclick="openSellerStore('${product.seller._id}')">
+                🏬 Ver Tienda Oficial y más artículos del vendedor &rarr;
+              </button>
+            ` : ''}
           </div>
         </div>
       </div>
@@ -543,16 +714,17 @@ async function submitQuestion(e, productId) {
 }
 
 // =====================================================
-// 6. CHECKOUT CON VALIDADOR DE CUPONES PROMOCIONALES
+// 6. CHECKOUT CON VARIANTES Y CUPONES PROMOCIONALES
 // =====================================================
 function startSingleCheckout(productId, title, unitPrice) {
   if (!currentToken) return openModal('modal-auth');
 
   const quantity = Number(document.getElementById('buy-quantity').value || 1);
+  const selectedVariant = getSelectedVariantFromUI();
   const baseTotal = Number(unitPrice) * quantity;
 
   pendingCheckoutData = {
-    items: [{ productId, title, unitPrice: Number(unitPrice), quantity }],
+    items: [{ productId, title, unitPrice: Number(unitPrice), quantity, selectedVariant }],
     baseTotal,
     total: baseTotal,
     couponCode: null,
@@ -571,7 +743,7 @@ function openCheckoutModalWithData() {
 }
 
 function refreshCheckoutSummaryUI() {
-  const summaryItems = pendingCheckoutData.items.map(i => `${i.quantity}x "${i.title}"`).join(' + ');
+  const summaryItems = pendingCheckoutData.items.map(i => `${i.quantity}x "${i.title}" (${i.selectedVariant || 'Estándar'})`).join(' + ');
   const couponText = pendingCheckoutData.couponCode
     ? ` (Cupón ${pendingCheckoutData.couponCode}: -${pendingCheckoutData.discountPercent}% OFF aplicado)`
     : '';
@@ -638,7 +810,11 @@ async function confirmElectronicPayment() {
     method: 'POST',
     headers: getAuthHeaders(),
     body: JSON.stringify({
-      items: pendingCheckoutData.items.map(i => ({ productId: i.productId, quantity: i.quantity })),
+      items: pendingCheckoutData.items.map(i => ({
+        productId: i.productId,
+        quantity: i.quantity,
+        selectedVariant: i.selectedVariant || 'Estándar'
+      })),
       paymentMethod: selectedPaymentMethod,
       couponCode: pendingCheckoutData.couponCode,
       shipping: { carrier, street, city, state, zipCode }
@@ -678,7 +854,7 @@ async function confirmElectronicPayment() {
 }
 
 // =====================================================
-// 7. PANEL DE USUARIO + MÉTRICAS CANVAS + MEDIACIÓN + FACTURA C
+// 7. PANEL DE USUARIO + EXPORTACIÓN EXCEL CSV + REPUTACIÓN
 // =====================================================
 async function loadUserDashboard() {
   if (!currentToken) return openModal('modal-auth');
@@ -691,16 +867,27 @@ async function loadUserDashboard() {
   userNotifications = profile.notifications || [];
   renderNotificationsBell();
 
+  cachedSalesList = mySales || [];
+  cachedWithdrawalsList = profile.withdrawals || [];
   cachedOrdersMap = {};
   [...myPurchases, ...mySales].forEach(o => { cachedOrdersMap[o._id] = o; });
 
-  // Cálculos de métricas financieras para el Vendedor
   const totalGrossSales = mySales.reduce((acc, s) => acc + (s.status !== 'reembolsada' ? s.totalAmount : 0), 0);
   const avgTicket = mySales.length > 0 ? Math.round(totalGrossSales / mySales.length) : 0;
   const activeDisputesCount = [...mySales, ...myPurchases].filter(o => o.status === 'en_reclamo').length;
+  const rep = getSellerReputationBadge(profile.reputation);
 
   document.getElementById('dashboard-container').innerHTML = `
-    <h2 style="margin-bottom:16px">Panel de Control Empresarial de ${profile.name}</h2>
+    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-bottom:16px">
+      <div>
+        <h2>Panel de Control Empresarial de ${profile.name}</h2>
+        <span style="color:#00a650; font-weight:700">${rep.medal} | ⭐ ${rep.rating}</span>
+      </div>
+      <div style="display:flex; gap:8px">
+        <button class="btn-outline" onclick="openSellerStore('${profile._id}')">🏬 Ver mi Tienda Pública</button>
+        <button class="btn-primary" onclick="exportSalesToCSV()">📥 Descargar Libro de Ventas (CSV / Excel)</button>
+      </div>
+    </div>
 
     <!-- BILLETERA ESCROW + RETIRO POR CBU / ALIAS -->
     <div class="wallet-banner">
@@ -726,7 +913,7 @@ async function loadUserDashboard() {
       <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:12px; margin:14px 0">
         <div class="qa-item">
           <small style="color:#666">Volumen Bruto Vendido</small>
-          <div style="font-size:1.35rem; font-weight:700; color:#2d3277">$ ${totalGrossSales.toLocaleString('es-AR')}</div>
+          <div style="font-size:1.35rem; font-weight:700; color:#3483fa">$ ${totalGrossSales.toLocaleString('es-AR')}</div>
         </div>
         <div class="qa-item">
           <small style="color:#666">Ticket Promedio por Orden</small>
@@ -745,9 +932,9 @@ async function loadUserDashboard() {
     </div>
 
     <div class="dashboard-grid">
-      <!-- PUBLICAR ARTÍCULO CON OFERTA RELÁMPAGO (% OFF) Y MULTER -->
+      <!-- PUBLICAR ARTÍCULO CON VARIANTES, OFERTA (% OFF) Y MULTER -->
       <div class="dash-panel">
-        <h3>📦 Publicar Artículo (Con Oferta Relámpago Opcional)</h3>
+        <h3>📦 Publicar Artículo (Con Variantes y Oferta Relámpago)</h3>
         <form onsubmit="handleCreateProduct(event)" style="margin-top:12px">
           <div class="form-group">
             <label>Título del artículo</label>
@@ -789,6 +976,10 @@ async function loadUserDashboard() {
             </div>
           </div>
           <div class="form-group">
+            <label>🎨 Variantes separadas por coma (Talle, Color, Capacidad)</label>
+            <input type="text" id="prod-variants" placeholder="Ej: Color Negro, Color Plata, Edición 32GB" />
+          </div>
+          <div class="form-group">
             <label>📸 Subir fotos desde tu PC (Hasta 5 imágenes)</label>
             <input type="file" id="prod-files" multiple accept="image/*" />
           </div>
@@ -804,7 +995,7 @@ async function loadUserDashboard() {
         </form>
       </div>
 
-      <!-- PREGUNTAS PENDIENTES, STOCK/OFERTAS Y FAVORITOS -->
+      <!-- PREGUNTAS PENDIENTES, STOCK/OFERTAS/PAUSAR Y FAVORITOS -->
       <div class="dash-panel">
         <h3>💬 Preguntas Pendientes (${pendingQuestions.length})</h3>
         <div style="margin-top:10px">
@@ -820,20 +1011,23 @@ async function loadUserDashboard() {
           `).join('')}
         </div>
 
-        <h3 style="margin-top:20px">🏷️ Mis Artículos: Stock y Oferta Relámpago (${myProducts.length})</h3>
-        <div style="margin-top:10px; max-height:240px; overflow-y:auto">
+        <h3 style="margin-top:20px">🏷️ Mis Artículos: Stock, Oferta y Estado (${myProducts.length})</h3>
+        <div style="margin-top:10px; max-height:260px; overflow-y:auto">
           ${myProducts.map(p => `
             <div class="qa-item" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px">
               <div>
                 <strong>${p.title}</strong> ($${p.price.toLocaleString('es-AR')})<br/>
-                <small>Estado: ${p.status} | Vendidos: ${p.soldCount} | Oferta: <strong>${p.discountPercent || 0}% OFF</strong></small>
+                <small>Estado: <strong>${p.status.toUpperCase()}</strong> | Vendidos: ${p.soldCount} | Oferta: <strong>${p.discountPercent || 0}% OFF</strong></small>
               </div>
-              <div style="display:flex; align-items:center; gap:6px">
+              <div style="display:flex; align-items:center; gap:5px; flex-wrap:wrap">
                 <small>Stock:</small>
-                <input type="number" id="stk-${p._id}" value="${p.stock}" min="0" style="width:55px; padding:4px" />
+                <input type="number" id="stk-${p._id}" value="${p.stock}" min="0" style="width:52px; padding:4px" />
                 <small>%OFF:</small>
-                <input type="number" id="dsc-${p._id}" value="${p.discountPercent || 0}" min="0" max="90" style="width:55px; padding:4px" />
-                <button class="btn-outline" onclick="updateStockAndDiscount('${p._id}')">Guardar</button>
+                <input type="number" id="dsc-${p._id}" value="${p.discountPercent || 0}" min="0" max="90" style="width:50px; padding:4px" />
+                <button class="btn-outline" style="padding:5px 8px" onclick="updateStockAndDiscount('${p._id}')">Guardar</button>
+                <button class="btn-outline" style="padding:5px 8px; color:${p.status === 'pausada' ? '#00a650' : '#e65100'}" onclick="togglePauseProduct('${p._id}', '${p.status}')">
+                  ${p.status === 'pausada' ? '▶ Reactivar' : '⏸ Pausar'}
+                </button>
               </div>
             </div>
           `).join('')}
@@ -864,7 +1058,7 @@ async function loadUserDashboard() {
               <div style="display:flex; justify-content:space-between; flex-wrap:wrap; gap:8px">
                 <div>
                   <strong>Venta #${sale._id}</strong> | Comprador: <strong>${sale.buyer?.name || 'Cliente'}</strong><br/>
-                  <span>Artículos: ${sale.items.map(i => `${i.quantity}x ${i.title}`).join(', ')} | Total: <strong>$${sale.totalAmount.toLocaleString('es-AR')}</strong></span>
+                  <span>Artículos: ${sale.items.map(i => `${i.quantity}x ${i.title} [${i.selectedVariant || 'Estándar'}]`).join(', ')} | Total: <strong>$${sale.totalAmount.toLocaleString('es-AR')}</strong></span>
                 </div>
                 <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap">
                   <button class="btn-outline" onclick="printInvoice('${sale._id}')">🧾 Factura C</button>
@@ -877,7 +1071,7 @@ async function loadUserDashboard() {
                 <div style="margin-top:10px; padding:12px; background:#ffebee; border:1px solid #ef5350; border-radius:6px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px">
                   <div>
                     <strong style="color:#c62828">⚠️ RECLAMO ABIERTO POR EL COMPRADOR (Fondos congelados en Escrow):</strong><br/>
-                    <span>Motivo: "${sale.dispute?.reason || 'Problema reportado'}"</span>
+                    <span style="color:#222">Motivo: "${sale.dispute?.reason || 'Problema reportado'}"</span>
                   </div>
                   <button class="btn-primary" style="background:#c62828" onclick="refundOrderFromSeller('${sale._id}')">
                     💸 Aceptar Devolución y Reembolsar al Comprador
@@ -885,7 +1079,7 @@ async function loadUserDashboard() {
                 </div>
               ` : ''}
 
-              <div style="background:#fff; border:1px solid #ddd; border-radius:6px; padding:12px; margin-top:10px; font-size:0.88rem">
+              <div style="background:#fff; color:#222; border:1px solid #ddd; border-radius:6px; padding:12px; margin-top:10px; font-size:0.88rem">
                 <div>📍 <strong>Destino (${ship.carrier || 'Correo Argentino'}):</strong> ${addr.street || '-'}, ${addr.city || '-'}, ${addr.state || '-'} (CP: ${addr.zipCode || '-'})</div>
                 <div style="margin-top:8px; color:#444">
                   📋 <strong>Procedimiento del vendedor para ${ship.carrier || 'Correo Argentino'}:</strong>
@@ -940,7 +1134,7 @@ async function loadUserDashboard() {
               <div>
                 <strong>Orden #${ord._id}</strong> - Estado: <span style="color:#3483fa; font-weight:700">${ord.status}</span>
                 ${ord.couponCode ? `<span style="background:#e8f5e9; color:#1b5e20; padding:2px 6px; border-radius:4px; font-size:0.75rem; margin-left:6px">🎟️ Cupón ${ord.couponCode}</span>` : ''}<br/>
-                <span>Artículos: ${ord.items.map(i => `${i.quantity}x ${i.title}`).join(', ')} | Total Pagado: <strong>$${ord.totalAmount.toLocaleString('es-AR')}</strong></span>
+                <span>Artículos: ${ord.items.map(i => `${i.quantity}x ${i.title} [${i.selectedVariant || 'Estándar'}]`).join(', ')} | Total Pagado: <strong>$${ord.totalAmount.toLocaleString('es-AR')}</strong></span>
               </div>
               <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap">
                 <button class="btn-outline" onclick="printInvoice('${ord._id}')">🧾 Descargar Factura C</button>
@@ -962,13 +1156,13 @@ async function loadUserDashboard() {
             </div>
 
             ${ord.dispute && ord.dispute.reason ? `
-              <div style="margin-top:8px; padding:10px; background:#fff3e0; border-left:4px solid #ff9800; font-size:0.85rem">
+              <div style="margin-top:8px; padding:10px; background:#fff3e0; color:#222; border-left:4px solid #ff9800; font-size:0.85rem">
                 <strong>⚖️ Mediación de Compra Protegida:</strong> "${ord.dispute.reason}"
                 ${ord.dispute.resolution ? `<br/><strong>Resolución:</strong> ${ord.dispute.resolution}` : ' — <em>En espera de respuesta o reembolso del vendedor.</em>'}
               </div>
             ` : ''}
 
-            <div style="background:#fff; border:1px solid #dce6f7; border-radius:6px; padding:12px; margin-top:10px; font-size:0.88rem">
+            <div style="background:#fff; color:#222; border:1px solid #dce6f7; border-radius:6px; padding:12px; margin-top:10px; font-size:0.88rem">
               <div style="display:flex; justify-content:space-between; flex-wrap:wrap; gap:8px">
                 <span>🚚 <strong>Empresa de correo:</strong> ${ship.carrier || 'Correo Argentino'}</span>
                 <span>📍 <strong>Entrega en:</strong> ${addr.street || ''}, ${addr.city || ''} (CP ${addr.zipCode || ''})</span>
@@ -1021,7 +1215,69 @@ async function loadUserDashboard() {
   drawSalesAnalyticsCanvas(mySales, profile.wallet);
 }
 
-// Dibuja el Gráfico de Barras en HTML5 Canvas con Ingresos por Categoría y Estado de Billetera
+// Exportador Contable a CSV / Excel (con BOM UTF-8 para tildes y eñes en Excel)
+function exportSalesToCSV() {
+  if (!cachedSalesList || cachedSalesList.length === 0) {
+    return alert('Aún no tienes ventas registradas para exportar.');
+  }
+
+  const headers = [
+    'Orden ID',
+    'Fecha',
+    'Comprador',
+    'Articulos y Variantes',
+    'Cupon Aplicado',
+    'Descuento ($)',
+    'Total Abonado ($)',
+    'Medio de Pago',
+    'Estado Escrow',
+    'Correo',
+    'Codigo Seguimiento'
+  ];
+
+  const rows = cachedSalesList.map(sale => {
+    const itemsDesc = (sale.items || []).map(i => `${i.quantity}x ${i.title} (${i.selectedVariant || 'Estándar'})`).join(' | ');
+    return [
+      sale._id,
+      new Date(sale.createdAt).toLocaleDateString('es-AR'),
+      (sale.buyer?.name || 'Cliente').replace(/;/g, ','),
+      itemsDesc.replace(/;/g, ','),
+      sale.couponCode || 'Ninguno',
+      sale.discountAmount || 0,
+      sale.totalAmount || 0,
+      sale.paymentMethod,
+      sale.status,
+      sale.shipping?.carrier || 'Correo Argentino',
+      sale.shipping?.trackingCode || 'Pendiente'
+    ].join(';');
+  });
+
+  const csvContent = '\uFEFF' + headers.join(';') + '\n' + rows.join('\n');
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `libro_ventas_miecommerce_${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  showToast('📥 Libro contable de ventas descargado en formato CSV / Excel.');
+}
+
+async function togglePauseProduct(productId, currentStatus) {
+  const newStatus = currentStatus === 'pausada' ? 'activa' : 'pausada';
+  const res = await fetch(`${API_URL}/products/${productId}`, {
+    method: 'PATCH',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ status: newStatus })
+  });
+  if (res.ok) {
+    showToast(newStatus === 'pausada' ? '⏸ Publicación pausada temporalmente' : '▶ Publicación reactivada');
+    loadUserDashboard();
+  }
+}
+
 function drawSalesAnalyticsCanvas(sales, wallet) {
   const canvas = document.getElementById('sales-analytics-canvas');
   if (!canvas) return;
@@ -1063,19 +1319,16 @@ function drawSalesAnalyticsCanvas(sales, wallet) {
     const barH = Math.round((val / maxVal) * maxBarHeight);
     const y = baseY - barH;
 
-    // Color de barra
     if (label === 'En Escrow') ctx.fillStyle = '#ff9800';
     else if (label === 'Disponible') ctx.fillStyle = '#00a650';
     else ctx.fillStyle = '#3483fa';
 
     ctx.fillRect(x, y, barWidth, barH);
 
-    // Valor encima de la barra
     ctx.fillStyle = '#222';
     ctx.textAlign = 'center';
     ctx.fillText(`$${Math.round(val / 1000)}k`, x + barWidth / 2, y - 8);
 
-    // Etiqueta debajo
     ctx.fillStyle = '#555';
     ctx.fillText(label.slice(0, 12), x + barWidth / 2, baseY + 22);
   });
@@ -1118,7 +1371,6 @@ async function refundOrderFromSeller(orderId) {
   }
 }
 
-// Generador de Comprobante / Factura Electrónica "C" Imprimible con CAE y QR Fiscal
 function printInvoice(orderId) {
   const ord = cachedOrdersMap[orderId];
   if (!ord) return;
@@ -1168,7 +1420,7 @@ function printInvoice(orderId) {
           <thead>
             <tr>
               <th>Cant.</th>
-              <th>Descripción del Artículo</th>
+              <th>Descripción del Artículo y Variante</th>
               <th>Precio Unit.</th>
               <th>Subtotal</th>
             </tr>
@@ -1177,7 +1429,7 @@ function printInvoice(orderId) {
             ${ord.items.map(i => `
               <tr>
                 <td>${i.quantity}</td>
-                <td>${i.title}</td>
+                <td>${i.title} (${i.selectedVariant || 'Estándar'})</td>
                 <td>$ ${Number(i.unitPrice).toLocaleString('es-AR')}</td>
                 <td>$ ${(i.quantity * i.unitPrice).toLocaleString('es-AR')}</td>
               </tr>
@@ -1214,6 +1466,7 @@ async function handleCreateProduct(e) {
   formData.append('price', document.getElementById('prod-price').value);
   formData.append('discountPercent', document.getElementById('prod-discount').value || 0);
   formData.append('stock', document.getElementById('prod-stock').value);
+  formData.append('variants', document.getElementById('prod-variants').value || '');
   formData.append('imageUrl', document.getElementById('prod-image').value);
   formData.append('description', document.getElementById('prod-desc').value);
 
@@ -1299,6 +1552,7 @@ function appendChatMessageToModal(msg) {
   div.style.cssText = `
     align-self: ${isMe ? 'flex-end' : 'flex-start'};
     background: ${isMe ? '#dcf8c6' : '#fff'};
+    color: #111;
     padding: 8px 12px;
     border-radius: 8px;
     max-width: 78%;
@@ -1376,7 +1630,7 @@ function printShippingLabel(orderId) {
         </div>
         <div class="section">
           <strong>CONTENIDO DEL PAQUETE:</strong><br/>
-          ${sale.items.map(i => `${i.quantity}x ${i.title}`).join('<br/>')}
+          ${sale.items.map(i => `${i.quantity}x ${i.title} [${i.selectedVariant || 'Estándar'}]`).join('<br/>')}
         </div>
         <div class="bars"></div>
         <div class="barcode">* ${tracking} *</div>
