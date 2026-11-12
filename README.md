@@ -23,6 +23,28 @@
 * **Fideicomiso Transaccional (*Escrow* - Compra Protegida):** Aislamiento contable entre el saldo en retención (`pendingBalance`) y el saldo líquido disponible (`availableBalance`). El dinero solo se libera al vendedor cuando el comprador certifica la recepción conforme del paquete.
 * **Arquitectura Orientada a Eventos en Tiempo Real (`Socket.io`):** Salas privadas por usuario (`user_<id>`) y salas públicas por publicación (`product_<id>`) para preguntas, respuestas, ventas, seguimiento postal, mensajería post-venta y campanita de notificaciones persistentes.
 
+### 🔄 Flujo Transaccional de Compra Protegida (Escrow & Logística)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor C as Comprador
+    participant API as Backend Node.js / Express
+    participant DB as MongoDB (Filess.io)
+    participant S as Vendedor (Socket.io)
+
+    C->>API: Inicia Checkout (QR / Tarjeta / Billetera + Cupón)
+    API->>DB: Descuento atómico de Stock ($gte: quantity)
+    API->>DB: Acredita monto en wallet.pendingBalance (Escrow)
+    API-->>S: Alerta en vivo: Nueva Venta + Etiqueta de Correo lista
+    S->>API: Despacha paquete (Correo Argentino / Andreani / OCA)
+    API-->>C: Notificación Socket.io con Código de Seguimiento
+    C->>API: Confirma recepción conforme del paquete
+    API->>DB: Transfiere de pendingBalance a availableBalance
+    API-->>C: Habilita valoración de satisfacción (1 a 5 ★)
+```
+
+
 ---
 
 ## 🚀 Módulos y Funcionalidades Principales

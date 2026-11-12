@@ -17,6 +17,19 @@ initSocket(server);
 
 // Middlewares
 app.use(cors());
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
+
+// Cabeceras de seguridad HTTP (ajustado para permitir imágenes externas y QR)
+app.use(helmet({ contentSecurityPolicy: false }));
+
+// Limitador contra fuerza bruta: máximo 120 peticiones cada 15 minutos por IP
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 120,
+  message: { error: 'Demasiadas peticiones desde esta IP. Intenta nuevamente en 15 minutos.' }
+});
+app.use('/api', apiLimiter);
 app.use(express.json());
 
 // Servir archivos estáticos del Frontend (carpeta public)

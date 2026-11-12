@@ -1,0 +1,34 @@
+# .github/workflows/ci.yml
+name: miecommerce CI - Verificación de Integridad
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build-and-verify:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Clonar repositorio
+        uses: actions/checkout@v4
+
+      - name: Configurar entorno Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18.x'
+          cache: 'npm'
+
+      - name: Instalar dependencias limpias
+        run: npm install
+
+      - name: Verificar sintaxis de módulos críticos (Backend & Servicios)
+        run: |
+          node --check server.js
+          node --check seed.js
+          node --check src/routes/api.routes.js
+          node --check src/services/checkoutService.js
+          node --check src/services/escrowService.js
+          node --check src/controllers/orderAndReviewController.js
